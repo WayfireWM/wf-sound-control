@@ -157,6 +157,8 @@ class SoundWindow
     void on_value_changed()
     {
         simple_audio::set_level(scale.get_value());
+        on_enter(NULL);
+        on_leave(NULL);
     }
 
     void update_volume(long volume)
