@@ -90,9 +90,12 @@ class SoundWindow
     Gtk::Image img;
     Gtk::Scale scale;
 
+    WayfireDisplay *display;
+
     SoundWindow(WayfireDisplay *display,
                 struct wl_output *wl_output) : window()
     {
+        this->display = display;
         box.set_orientation(Gtk::ORIENTATION_HORIZONTAL);
 
         scale.set_range(0, 100);
@@ -102,11 +105,9 @@ class SoundWindow
         scale.set_size_request(150, 30);
         scale.set_digits(0);
 
-//        scale.signal_scroll_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_scroll));
-
-        //scale.signal_value_changed().connect(sigc::bind(&on_change, &scale));
-//        scale.set_value(0.5);
-
+        update_volume(display->current_volume);
+        scale.signal_value_changed().connect(sigc::mem_fun(*this, &SoundWindow::on_value_changed));
+        scale.signal_scroll_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_scroll));
 
         auto size = Gtk::IconSize::register_new("mybig", 30, 30);
         img.set_from_icon_name("audio-volume-low", size);
@@ -129,6 +130,13 @@ class SoundWindow
         window.set_decorated(false);
         window.set_resizable(false);
 
+        window.signal_leave_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_leave));
+        window.signal_enter_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_enter));
+        scale.signal_leave_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_leave));
+        scale.signal_enter_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_enter));
+        img.signal_leave_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_leave));
+        img.signal_enter_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_enter));
+
         window.show_all();
 
         auto gdk_win = window.get_window()->gobj();
@@ -139,17 +147,41 @@ class SoundWindow
         zwf_wm_surface_v1_configure(wm_surface, 100, 100);
 
         display->app->add_window(window);
-        update_volume(display->current_volume);
     }
 
-    void on_scroll()
+    void on_scroll(GdkEventScroll *scroll)
     {
-        std::cout << "scroll" << std::endl;
+        /* TODO: control volume via scroll */
+    }
+
+    void on_value_changed()
+    {
+        simple_audio::set_level(scale.get_value());
     }
 
     void update_volume(long volume)
     {
         scale.set_value(volume);
+        on_enter(NULL);
+        on_leave(NULL);
+    }
+
+    sigc::connection timeout;
+    void on_enter(GdkEventCrossing *ev)
+    {
+        timeout.disconnect();
+    }
+
+    void on_leave(GdkEventCrossing *)
+    {
+        timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &SoundWindow::on_timeout), 2000);
+    }
+
+    bool on_timeout()
+    {
+        timeout.disconnect();
+        display->app->quit();
+        return false;
     }
 
     ~SoundWindow()
@@ -204,7 +236,6 @@ WayfireDisplay::WayfireDisplay(decltype(app) a)
 
 void WayfireDisplay::init(wl_display *display)
 {
-    std::cout << "hey" << std::endl;
     wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, this);
     wl_display_roundtrip(display);
@@ -215,16 +246,8 @@ WayfireDisplay::~WayfireDisplay()
     // TODO: clean up, if we really need */
 }
 
-void on_change(Gtk::Scale *scale)
-{
-    std::cout << scale->get_value() << std::endl;
-
-    simple_audio::set_level(scale->get_value());
-}
-
 void on_activate(Glib::RefPtr<Gtk::Application> app, WayfireDisplay* display)
 {
-    std::cout << "get vol" << std::endl;
     display->current_volume = simple_audio::get_level();
 
     for (auto& sw : display->output_window)
@@ -233,7 +256,6 @@ void on_activate(Glib::RefPtr<Gtk::Application> app, WayfireDisplay* display)
 
 void on_startup(Glib::RefPtr<Gtk::Application> app, WayfireDisplay *display)
 {
-    std::cout << "startup" << std::endl;
     auto dm = Gdk::DisplayManager::get();
     auto gdisp = dm->get_default_display()->gobj();
 
@@ -242,9 +264,7 @@ void on_startup(Glib::RefPtr<Gtk::Application> app, WayfireDisplay *display)
 
 int main(int argc, char *argv[])
 {
-    std::cout << "here" << std::endl;
-    auto app = Gtk::Application::create(argc, argv, "org.wayfire.SoundPopup",
-                                        Gio::APPLICATION_HANDLES_OPEN);
+    /* TODO: try to properly parse args, maybe using gtk */
     if (argc > 2)
     {
         std::string action = argv[1];
@@ -268,9 +288,14 @@ int main(int argc, char *argv[])
 
         now = std::min(100l, std::max(now + delta, 0l));
         simple_audio::set_level(now);
-    }
-    std::cout << "here2" << std::endl;
 
+        /* skip the first 2 options */
+        argc -= 2;
+        argv = &argv[2];
+    }
+
+    auto app = Gtk::Application::create(argc, argv, "org.wayfire.SoundPopup",
+                                        Gio::APPLICATION_HANDLES_OPEN);
     WayfireDisplay display(app);
     app->signal_activate().connect_notify(sigc::bind(&on_activate, app, &display));
     app->signal_startup().connect_notify(sigc::bind(&on_startup, app, &display));
