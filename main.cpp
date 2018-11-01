@@ -169,13 +169,29 @@ class SoundWindow
     }
 
     sigc::connection timeout;
-    void on_enter(GdkEventCrossing *ev)
+    void on_enter(GdkEventCrossing *cross)
     {
+        if (cross) // event isn't synthetic
+        {
+            // ignore events between the window and widgets
+            if (cross->detail != GDK_NOTIFY_NONLINEAR &&
+                cross->detail != GDK_NOTIFY_NONLINEAR_VIRTUAL)
+                return;
+        }
+
         timeout.disconnect();
     }
 
-    void on_leave(GdkEventCrossing *)
+    void on_leave(GdkEventCrossing *cross)
     {
+        if (cross) // event isn't synthetic
+        {
+            // ignore events between the window and widgets
+            if (cross->detail != GDK_NOTIFY_NONLINEAR &&
+                cross->detail != GDK_NOTIFY_NONLINEAR_VIRTUAL)
+                return;
+        }
+
         timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &SoundWindow::on_timeout), 2000);
     }
 
