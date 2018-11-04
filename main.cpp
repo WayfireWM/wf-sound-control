@@ -354,15 +354,12 @@ namespace UniqueApp
      * Otherwise, acquire the lock and return 0 */
     int64_t acquire_get_lock_pid()
     {
-        std::cout << "try to get lock pid" << std::endl;
         fd = open(shared_file_name.c_str(), O_CREAT | O_RDWR, 0666);
 
         if (flock(fd, LOCK_EX | LOCK_NB) < 0)
         {
             pid_t pid = getpid();
-            std::cout << "write" << std::endl;
             write(fd, &pid, sizeof(pid_t));
-
             close(fd);
 
             return -1;
@@ -391,7 +388,6 @@ int main(int argc, char *argv[])
     if (UniqueApp::acquire_get_lock_pid() < 0)
         return 0;
 
-    std::cout << "full app" << std::endl;
     auto app = Gtk::Application::create("", Gio::APPLICATION_HANDLES_OPEN);
     WayfireDisplay display(app);
     display.current_volume = alevel;
