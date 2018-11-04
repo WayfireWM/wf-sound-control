@@ -1,11 +1,16 @@
 #include <gtkmm.h>
 #include <gdkmm.h>
+
 #include <iostream>
 #include <cstring>
 #include <map>
 #include <unistd.h>
 
+#include <glibmm/main.h>
+#include <sys/inotify.h>
+
 #include <alsa/asoundlib.h>
+#include <sys/file.h>
 
 #include "wayfire-shell-client-protocol.h"
 #include <wayland-client.h>
@@ -72,6 +77,7 @@ struct WayfireDisplay
     Glib::RefPtr<Gtk::Application> app;
 
     long current_volume;
+    int inotify_fd;
 
     WayfireDisplay(decltype(app) a);
     void init(wl_display *display);
@@ -264,12 +270,30 @@ WayfireDisplay::~WayfireDisplay()
     // TODO: clean up, if we really need */
 }
 
-void on_activate(Glib::RefPtr<Gtk::Application> app, WayfireDisplay* display)
+namespace UniqueApp
 {
+    std::string shared_file_name = "/wf-sound-control-lock";
+
+    void add_watch(int inotify_fd)
+    {
+        inotify_add_watch(inotify_fd, shared_file_name.c_str(), IN_MODIFY);
+    }
+}
+
+#define INOT_BUF_SIZE (1024 * sizeof(inotify_event))
+char buf[INOT_BUF_SIZE];
+
+static bool handle_inotify_event(WayfireDisplay *display, Glib::IOCondition cond)
+{
+    /* read, but don't use */
+    read(display->inotify_fd, buf, INOT_BUF_SIZE);
     display->current_volume = simple_audio::get_level();
 
     for (auto& sw : display->output_window)
         sw.second->update_volume(display->current_volume);
+
+    UniqueApp::add_watch(display->inotify_fd);
+    return true;
 }
 
 void on_startup(Glib::RefPtr<Gtk::Application> app, WayfireDisplay *display)
@@ -278,45 +302,103 @@ void on_startup(Glib::RefPtr<Gtk::Application> app, WayfireDisplay *display)
     auto gdisp = dm->get_default_display()->gobj();
 
     display->init(gdk_wayland_display_get_wl_display(gdisp));
+
+    /* Listen for changes to the lock file.
+     * This means another instance has been started,
+     * and we need to update audio volume */
+    display->inotify_fd = inotify_init();
+    Glib::signal_io().connect(
+        sigc::bind<0>(&handle_inotify_event, display),
+        display->inotify_fd, Glib::IO_IN | Glib::IO_HUP);
+
+    UniqueApp::add_watch(display->inotify_fd);
+}
+
+static int adjust_volume(int argc, char **argv)
+{
+    if (argc <= 2)
+        return simple_audio::get_level();
+
+    std::string action = argv[1];
+    long delta = std::atol(argv[2]);
+
+    if (action == "d" or action == "dec" or action == "decrease")
+    {
+        delta *= -1;
+    }
+    else if (action == "i" or action == "inc" or action == "increase")
+    {
+        delta *= 1;
+    }
+    else
+    {
+        std::cerr << "Invalid action" << std::endl;
+        delta *= 0;
+    }
+
+    long now = simple_audio::get_level();
+
+    now = std::min(100l, std::max(now + delta, 0l));
+    simple_audio::set_level(now);
+
+    return now;
+}
+
+namespace UniqueApp
+{
+    int fd;
+
+    /* Try to see if there is an active lock
+     *
+     * If there is, then write our pid to the file and return -1
+     * Otherwise, acquire the lock and return 0 */
+    int64_t acquire_get_lock_pid()
+    {
+        std::cout << "try to get lock pid" << std::endl;
+        fd = open(shared_file_name.c_str(), O_CREAT | O_RDWR, 0666);
+
+        if (flock(fd, LOCK_EX | LOCK_NB) < 0)
+        {
+            pid_t pid = getpid();
+            std::cout << "write" << std::endl;
+            write(fd, &pid, sizeof(pid_t));
+
+            close(fd);
+
+            return -1;
+        }
+
+        return 0;
+    }
+
+    /* Releases the lock and closes the fd */
+    void release_lock()
+    {
+        flock(fd, LOCK_UN);
+        close(fd);
+    }
 }
 
 int main(int argc, char *argv[])
 {
-    /* TODO: try to properly parse args, maybe using gtk */
-    if (argc > 2)
-    {
-        std::string action = argv[1];
-        long delta = std::atol(argv[2]);
+    /* Make sure we don't get a collision for different displays/users */
+    UniqueApp::shared_file_name = getenv("XDG_RUNTIME_DIR") + UniqueApp::shared_file_name
+        + "-" + getenv("WAYLAND_DISPLAY");
 
-        if (action == "d" or action == "dec" or action == "decrease")
-        {
-            delta *= -1;
-        }
-        else if (action == "i" or action == "inc" or action == "increase")
-        {
-            delta *= 1;
-        }
-        else
-        {
-            std::cerr << "Invalid action" << std::endl;
-            delta *= 0;
-        }
+    /* Adjust volume if cmdline args say so */
+    int alevel = adjust_volume(argc, argv);
 
-        long now = simple_audio::get_level();
+    if (UniqueApp::acquire_get_lock_pid() < 0)
+        return 0;
 
-        now = std::min(100l, std::max(now + delta, 0l));
-        simple_audio::set_level(now);
-
-        /* skip the first 2 options */
-        argc -= 2;
-        argv = &argv[2];
-    }
-
-    auto app = Gtk::Application::create(argc, argv, "org.wayfire.SoundPopup",
-                                        Gio::APPLICATION_HANDLES_OPEN);
+    std::cout << "full app" << std::endl;
+    auto app = Gtk::Application::create("", Gio::APPLICATION_HANDLES_OPEN);
     WayfireDisplay display(app);
-    app->signal_activate().connect_notify(sigc::bind(&on_activate, app, &display));
+    display.current_volume = alevel;
+
+    /* We initialize on signal_startup, at that time the wayland connection is ready */
     app->signal_startup().connect_notify(sigc::bind(&on_startup, app, &display));
 
     app->run();
+    UniqueApp::release_lock();
 }
