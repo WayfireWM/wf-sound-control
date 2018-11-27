@@ -127,11 +127,13 @@ class SoundWindow
         auto provider = Gtk::CssProvider::create();
 
         style->add_provider(provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-
         provider->load_from_data("window {border-radius: 12px; }");
 
         window.add(box);
         window.show_all_children();
+
+        /* Make sure we don't set an invalid opaque region */
+        window.set_opacity(0.99);
 
         window.set_decorated(false);
         window.set_resizable(false);
