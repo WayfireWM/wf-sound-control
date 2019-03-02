@@ -150,8 +150,11 @@ class SoundWindow
         auto gdk_win = window.get_window()->gobj();
         auto surf = gdk_wayland_window_get_wl_surface(gdk_win);
 
-        zwf_output = zwf_shell_manager_v1_get_wf_output(display->zwf_shell_manager, wl_output);
-        wm_surface = zwf_output_v1_get_wm_surface(zwf_output, surf, ZWF_OUTPUT_V1_WM_ROLE_OVERLAY);
+        zwf_output = zwf_shell_manager_v1_get_wf_output(
+            display->zwf_shell_manager, wl_output);
+        wm_surface = zwf_shell_manager_v1_get_wm_surface(
+            display->zwf_shell_manager, surf,
+            ZWF_WM_SURFACE_V1_ROLE_OVERLAY, wl_output);
         zwf_wm_surface_v1_configure(wm_surface, 100, 100);
 
         display->app->add_window(window);
