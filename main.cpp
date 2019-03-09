@@ -82,6 +82,13 @@ struct WayfireDisplay
     WayfireDisplay(decltype(app) a);
     void init(wl_display *display);
 
+    sigc::connection timeout;
+    int entered_count = 0;
+
+    void on_enter(GdkEventCrossing *cross);
+    void on_leave(GdkEventCrossing *cross);
+    bool on_timeout();
+
     ~WayfireDisplay();
 };
 
@@ -138,12 +145,8 @@ class SoundWindow
         window.set_decorated(false);
         window.set_resizable(false);
 
-        window.signal_leave_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_leave));
-        window.signal_enter_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_enter));
-        scale.signal_leave_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_leave));
-        scale.signal_enter_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_enter));
-        img.signal_leave_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_leave));
-        img.signal_enter_notify_event().connect_notify(sigc::mem_fun(*this, &SoundWindow::on_enter));
+        window.signal_leave_notify_event().connect_notify(sigc::mem_fun(display, &WayfireDisplay::on_leave));
+        window.signal_enter_notify_event().connect_notify(sigc::mem_fun(display, &WayfireDisplay::on_enter));
 
         window.show_all();
 
@@ -168,49 +171,15 @@ class SoundWindow
     void on_value_changed()
     {
         simple_audio::set_level(scale.get_value());
-        on_enter(NULL);
-        on_leave(NULL);
+        display->on_enter(NULL);
+        display->on_leave(NULL);
     }
 
     void update_volume(long volume)
     {
         scale.set_value(volume);
-        on_enter(NULL);
-        on_leave(NULL);
-    }
-
-    sigc::connection timeout;
-    void on_enter(GdkEventCrossing *cross)
-    {
-        if (cross) // event isn't synthetic
-        {
-            // ignore events between the window and widgets
-            if (cross->detail != GDK_NOTIFY_NONLINEAR &&
-                cross->detail != GDK_NOTIFY_NONLINEAR_VIRTUAL)
-                return;
-        }
-
-        timeout.disconnect();
-    }
-
-    void on_leave(GdkEventCrossing *cross)
-    {
-        if (cross) // event isn't synthetic
-        {
-            // ignore events between the window and widgets
-            if (cross->detail != GDK_NOTIFY_NONLINEAR &&
-                cross->detail != GDK_NOTIFY_NONLINEAR_VIRTUAL)
-                return;
-        }
-
-        timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &SoundWindow::on_timeout), 2000);
-    }
-
-    bool on_timeout()
-    {
-        timeout.disconnect();
-        display->app->quit();
-        return false;
+        display->on_enter(NULL);
+        display->on_leave(NULL);
     }
 
     ~SoundWindow()
@@ -268,6 +237,53 @@ void WayfireDisplay::init(wl_display *display)
     wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, this);
     wl_display_roundtrip(display);
+}
+
+void WayfireDisplay::on_enter(GdkEventCrossing *cross)
+{
+    if (cross) // event isn't synthetic
+    {
+        // ignore events between the window and widgets
+        if (cross->detail != GDK_NOTIFY_NONLINEAR &&
+            cross->detail != GDK_NOTIFY_NONLINEAR_VIRTUAL)
+            return;
+    }
+
+    /* Nothing to do except increment counter if we already have an input */
+    if (entered_count++ > 0)
+        return;
+
+    timeout.disconnect();
+}
+
+void WayfireDisplay::on_leave(GdkEventCrossing *cross)
+{
+    if (cross) // event isn't synthetic
+    {
+        // ignore events between the window and widgets
+        if (cross->detail != GDK_NOTIFY_NONLINEAR &&
+            cross->detail != GDK_NOTIFY_NONLINEAR_VIRTUAL)
+            return;
+    }
+
+    if (--entered_count > 0)
+        return;
+
+    if (entered_count < 0)
+    {
+        std::cerr << "Corrupted entered_count" << std::endl;
+        entered_count = 0;
+        return;
+    }
+
+    if (!timeout.connected())
+        timeout = Glib::signal_timeout().connect(sigc::mem_fun(this, &WayfireDisplay::on_timeout), 2000);
+}
+
+bool WayfireDisplay::on_timeout()
+{
+    app->quit();
+    return false;
 }
 
 WayfireDisplay::~WayfireDisplay()
