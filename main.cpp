@@ -83,7 +83,6 @@ struct WayfireDisplay
     void init(wl_display *display);
 
     sigc::connection timeout;
-    int entered_count = 0;
 
     void on_enter(GdkEventCrossing *cross);
     void on_leave(GdkEventCrossing *cross);
@@ -158,6 +157,8 @@ class SoundWindow
         wm_surface = zwf_shell_manager_v1_get_wm_surface(
             display->zwf_shell_manager, surf,
             ZWF_WM_SURFACE_V1_ROLE_OVERLAY, wl_output);
+        zwf_wm_surface_v1_set_keyboard_mode(wm_surface,
+            ZWF_WM_SURFACE_V1_KEYBOARD_FOCUS_MODE_NO_FOCUS);
         zwf_wm_surface_v1_configure(wm_surface, 100, 100);
 
         display->app->add_window(window);
@@ -249,10 +250,6 @@ void WayfireDisplay::on_enter(GdkEventCrossing *cross)
             return;
     }
 
-    /* Nothing to do except increment counter if we already have an input */
-    if (entered_count++ > 0)
-        return;
-
     timeout.disconnect();
 }
 
@@ -264,16 +261,6 @@ void WayfireDisplay::on_leave(GdkEventCrossing *cross)
         if (cross->detail != GDK_NOTIFY_NONLINEAR &&
             cross->detail != GDK_NOTIFY_NONLINEAR_VIRTUAL)
             return;
-    }
-
-    if (--entered_count > 0)
-        return;
-
-    if (entered_count < 0)
-    {
-        std::cerr << "Corrupted entered_count" << std::endl;
-        entered_count = 0;
-        return;
     }
 
     if (!timeout.connected())
