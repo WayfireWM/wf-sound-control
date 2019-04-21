@@ -49,21 +49,31 @@ namespace simple_audio
 
     int get_level()
     {
-        setup_audio();
-
         long volume;
         snd_mixer_selem_get_playback_volume(elem, (snd_mixer_selem_channel_id_t)0, &volume);
 
         auto dta = 100.0 * volume / max;
-
-        cleanup_audio();
         return dta + 0.5;
+    }
+
+    int get_level_init()
+    {
+        setup_audio();
+        auto level = get_level();
+        cleanup_audio();
+
+        return level;
     }
 
     void set_level(long level)
     {
-        setup_audio();
         snd_mixer_selem_set_playback_volume_all(elem, level * max / 100.0);
+    }
+
+    void set_level_init(long level)
+    {
+        setup_audio();
+        set_level(level);
         cleanup_audio();
     }
 }
@@ -169,15 +179,23 @@ class SoundWindow
         /* TODO: control volume via scroll */
     }
 
+    long last_volume = -1;
     void on_value_changed()
     {
-        simple_audio::set_level(scale.get_value());
+        long current_volume = scale.get_value() + 0.5;
+        if (current_volume != last_volume)
+        {
+            last_volume = current_volume;
+            simple_audio::set_level_init(current_volume);
+        }
+
         display->on_enter(NULL);
         display->on_leave(NULL);
     }
 
     void update_volume(long volume)
     {
+        last_volume = volume;
         scale.set_value(volume);
         display->on_enter(NULL);
         display->on_leave(NULL);
@@ -295,7 +313,7 @@ static bool handle_inotify_event(WayfireDisplay *display, Glib::IOCondition cond
 {
     /* read, but don't use */
     read(display->inotify_fd, buf, INOT_BUF_SIZE);
-    display->current_volume = simple_audio::get_level();
+    display->current_volume = simple_audio::get_level_init();
 
     for (auto& sw : display->output_window)
         sw.second->update_volume(display->current_volume);
@@ -325,7 +343,7 @@ void on_startup(Glib::RefPtr<Gtk::Application> app, WayfireDisplay *display)
 static int adjust_volume(int argc, char **argv)
 {
     if (argc <= 2)
-        return simple_audio::get_level();
+        return simple_audio::get_level_init();
 
     std::string action = argv[1];
     long delta = std::atol(argv[2]);
@@ -344,11 +362,13 @@ static int adjust_volume(int argc, char **argv)
         delta *= 0;
     }
 
-    long now = simple_audio::get_level();
+    simple_audio::setup_audio();
 
+    long now = simple_audio::get_level();
     now = std::min(100l, std::max(now + delta, 0l));
     simple_audio::set_level(now);
 
+    simple_audio::cleanup_audio();
     return now;
 }
 
