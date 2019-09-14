@@ -1,3 +1,5 @@
+**wf-sound-control is no longer maintained and it doesn't work on recent Wayfire versions. Check out the volume widget in wf-panel**
+
 # wf-sound-control
 
 A small GUI utility to control sound volume, for use with the wayfire wayland compositor.
